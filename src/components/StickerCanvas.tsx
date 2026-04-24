@@ -128,6 +128,17 @@ export default function StickerCanvas() {
       
       for (const obj of objects) {
         const o = obj as any;
+        
+        // Ensure original properties are stored once
+        if (o.customAnimation && o.customAnimation !== 'none' && o._originalAngle === undefined) {
+          o._originalAngle = o.angle || 0;
+          o._originalScaleX = o.scaleX || 1;
+          o._originalScaleY = o.scaleY || 1;
+          o._originalTop = o.top || 0;
+          o._originalLeft = o.left || 0;
+          o.set('objectCaching', false); // Disable caching ONLY when animating
+        }
+
         if (!o.customAnimation || o.customAnimation === 'none') {
           // If it was just stopped, reset to original and re-enable caching
           if (o._originalAngle !== undefined) {
@@ -140,22 +151,16 @@ export default function StickerCanvas() {
                objectCaching: true
              });
              delete o._originalAngle;
+             delete o._originalScaleX;
+             delete o._originalScaleY;
+             delete o._originalTop;
+             delete o._originalLeft;
              needsRender = true;
           }
           continue;
         }
 
         needsRender = true;
-        o.set('objectCaching', false);
-
-        if (o._originalAngle === undefined) {
-          o._originalAngle = o.angle || 0;
-          o._originalScaleX = o.scaleX || 1;
-          o._originalScaleY = o.scaleY || 1;
-          o._originalTop = o.top || 0;
-          o._originalLeft = o.left || 0;
-        }
-
         const frequency = 0.005;
         const phase = (time * frequency) % (Math.PI * 2);
 
@@ -450,9 +455,13 @@ export default function StickerCanvas() {
     setSelectedFont(fontFamily);
     if (!fabricCanvas.current) return;
     
-    const activeObject = fabricCanvas.current.getActiveObject();
-    if (activeObject && (activeObject.type === 'text' || activeObject.type === 'i-text')) {
-      (activeObject as any).set({ fontFamily });
+    const activeObjects = fabricCanvas.current.getActiveObjects();
+    if (activeObjects.length > 0) {
+      activeObjects.forEach(obj => {
+        if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') {
+          (obj as any).set({ fontFamily });
+        }
+      });
       fabricCanvas.current.requestRenderAll();
       saveHistory();
     }
@@ -462,10 +471,13 @@ export default function StickerCanvas() {
     setSelectedColor(color);
     if (!fabricCanvas.current) return;
     
-    const activeObject = fabricCanvas.current.getActiveObject();
-    if (activeObject) {
-      activeObject.set({ fill: color });
+    const activeObjects = fabricCanvas.current.getActiveObjects();
+    if (activeObjects.length > 0) {
+      activeObjects.forEach(obj => {
+        obj.set({ fill: color });
+      });
       fabricCanvas.current.requestRenderAll();
+      saveHistory();
     }
 
     if (fabricCanvas.current.isDrawingMode && fabricCanvas.current.freeDrawingBrush) {
