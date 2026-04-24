@@ -48,6 +48,7 @@ export default function StickerCanvas() {
   const fabricCanvas = useRef<fabric.Canvas | null>(null);
   const [activeTool, setActiveTool] = useState<'select' | 'text' | 'draw' | 'shape' | 'image'>('select');
   const [selectedColor, setSelectedColor] = useState(COLORS[0]);
+  const [selectedFont, setSelectedFont] = useState(FONTS[1].value); // Default to Pacifico
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   // History Management
@@ -218,7 +219,7 @@ export default function StickerCanvas() {
     const text = new fabric.IText('Testo Sticker', {
       left: 150,
       top: 150,
-      fontFamily: 'Pacifico',
+      fontFamily: selectedFont,
       fill: selectedColor,
       fontSize: 40,
     });
@@ -446,11 +447,14 @@ export default function StickerCanvas() {
   };
 
   const changeTextFont = (fontFamily: string) => {
+    setSelectedFont(fontFamily);
     if (!fabricCanvas.current) return;
+    
     const activeObject = fabricCanvas.current.getActiveObject();
-    if (activeObject && activeObject instanceof fabric.IText) {
-      activeObject.set({ fontFamily });
+    if (activeObject && (activeObject.type === 'text' || activeObject.type === 'i-text')) {
+      (activeObject as any).set({ fontFamily });
       fabricCanvas.current.requestRenderAll();
+      saveHistory();
     }
   };
 
@@ -673,7 +677,7 @@ export default function StickerCanvas() {
                         style={{ fontFamily: f.value }}
                         className={cn(
                           "text-left py-4 px-4 rounded-xl border transition-all text-lg",
-                          "bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/20"
+                          selectedFont === f.value ? "bg-white/20 border-white/40 shadow-lg" : "bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/20"
                         )}
                       >
                         {f.name}
