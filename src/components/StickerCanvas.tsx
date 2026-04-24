@@ -97,6 +97,12 @@ export default function StickerCanvas() {
   };
 
   useEffect(() => {
+    // Preload fonts to ensure they are available to Fabric.js
+    const fontNames = FONTS.map(f => f.value);
+    fontNames.forEach(font => {
+      document.fonts.load(`1em ${font}`).catch(() => {});
+    });
+
     if (!canvasRef.current || fabricCanvas.current) return;
 
     fabricCanvas.current = new fabric.Canvas(canvasRef.current, {
@@ -129,18 +135,7 @@ export default function StickerCanvas() {
       for (const obj of objects) {
         const o = obj as any;
         
-        // Ensure original properties are stored once
-        if (o.customAnimation && o.customAnimation !== 'none' && o._originalAngle === undefined) {
-          o._originalAngle = o.angle || 0;
-          o._originalScaleX = o.scaleX || 1;
-          o._originalScaleY = o.scaleY || 1;
-          o._originalTop = o.top || 0;
-          o._originalLeft = o.left || 0;
-          o.set('objectCaching', false); // Disable caching ONLY when animating
-        }
-
         if (!o.customAnimation || o.customAnimation === 'none') {
-          // If it was just stopped, reset to original and re-enable caching
           if (o._originalAngle !== undefined) {
              o.set({
                angle: o._originalAngle,
@@ -148,6 +143,8 @@ export default function StickerCanvas() {
                scaleY: o._originalScaleY,
                top: o._originalTop,
                left: o._originalLeft,
+               skewX: 0,
+               skewY: 0,
                objectCaching: true
              });
              delete o._originalAngle;
@@ -155,26 +152,35 @@ export default function StickerCanvas() {
              delete o._originalScaleY;
              delete o._originalTop;
              delete o._originalLeft;
+             o.setCoords();
              needsRender = true;
           }
           continue;
         }
 
         needsRender = true;
+        o.set('objectCaching', false);
+
+        if (o._originalAngle === undefined) {
+          o._originalAngle = o.angle || 0;
+          o._originalScaleX = o.scaleX || 1;
+          o._originalScaleY = o.scaleY || 1;
+          o._originalTop = o.top || 0;
+          o._originalLeft = o.left || 0;
+        }
+
         const frequency = 0.005;
         const phase = (time * frequency) % (Math.PI * 2);
 
         switch (o.customAnimation) {
           case 'jelly':
-            const sX = 1 + Math.sin(phase * 4) * 0.08;
-            const sY = 1 + Math.cos(phase * 4) * 0.08;
             o.set({
-              scaleX: o._originalScaleX * sX,
-              scaleY: o._originalScaleY * sY
+              scaleX: o._originalScaleX * (1 + Math.sin(phase * 4) * 0.1),
+              scaleY: o._originalScaleY * (1 + Math.cos(phase * 4) * 0.1)
             });
             break;
           case 'pop':
-            const pScale = 1 + Math.abs(Math.sin(phase * 5)) * 0.12;
+            const pScale = 1 + Math.abs(Math.sin(phase * 5)) * 0.15;
             o.set({
               scaleX: o._originalScaleX * pScale,
               scaleY: o._originalScaleY * pScale
@@ -182,28 +188,29 @@ export default function StickerCanvas() {
             break;
           case 'float':
             o.set({
-              top: o._originalTop + Math.sin(phase * 2) * 12,
-              angle: o._originalAngle + Math.cos(phase) * 3
+              top: o._originalTop + Math.sin(phase * 2) * 15,
+              angle: o._originalAngle + Math.cos(phase) * 4
             });
             break;
           case 'shake':
             o.set({
-              left: o._originalLeft + Math.sin(time * 0.02) * 3,
-              angle: o._originalAngle + Math.sin(time * 0.05) * 4
+              left: o._originalLeft + Math.sin(time * 0.02) * 4,
+              angle: o._originalAngle + Math.sin(time * 0.05) * 5
             });
             break;
           case 'doodle':
-            const dS = 1 + Math.sin(time * 0.01) * 0.02;
+            const dS = 1 + Math.sin(time * 0.01) * 0.03;
             o.set({
               scaleX: o._originalScaleX * dS,
-              angle: o._originalAngle + Math.cos(time * 0.01) * 2
+              angle: o._originalAngle + Math.cos(time * 0.01) * 3,
+              skewX: Math.sin(time * 0.01) * 5
             });
             break;
         }
       }
 
       if (needsRender) {
-        fabricCanvas.current.requestRenderAll();
+        fabricCanvas.current.renderAll();
       }
       animationFrameId.current = requestAnimationFrame(animate);
     };
@@ -221,15 +228,29 @@ export default function StickerCanvas() {
 
   const addText = () => {
     if (!fabricCanvas.current) return;
-    const text = new fabric.IText('Testo Sticker', {
-      left: 150,
-      top: 150,
-      fontFamily: selectedFont,
+    
+    const font = selectedFont || 'Inter';
+    
+    const text = new fabric.IText('Tocca per editare', {
+      left: 250,
+      top: 250,
+      fontFamily: font,
       fill: selectedColor,
-      fontSize: 40,
+      fontSize: 50,
+      textAlign: 'center',
+      originX: 'center',
+      originY: 'center',
+      cornerColor: '#6366f1',
+      cornerStyle: 'circle',
+      transparentCorners: false,
+      padding: 10,
+      objectCaching: false
     });
+
     fabricCanvas.current.add(text);
     fabricCanvas.current.setActiveObject(text);
+    fabricCanvas.current.requestRenderAll();
+    saveHistory();
     setActiveTool('select');
   };
 
@@ -398,17 +419,18 @@ export default function StickerCanvas() {
           top: activeObject._originalTop,
           left: activeObject._originalLeft,
           skewX: 0,
-          skewY: 0
+          skewY: 0,
+          objectCaching: true
         });
+        delete activeObject._originalAngle;
+        delete activeObject._originalScaleX;
+        delete activeObject._originalScaleY;
+        delete activeObject._originalTop;
+        delete activeObject._originalLeft;
       }
       
       activeObject.customAnimation = type;
-      delete activeObject._originalAngle;
-      delete activeObject._originalScaleX;
-      delete activeObject._originalScaleY;
-      delete activeObject._originalTop;
-      delete activeObject._originalLeft;
-      
+      activeObject.setCoords();
       fabricCanvas.current.requestRenderAll();
       saveHistory();
     }
@@ -456,15 +478,32 @@ export default function StickerCanvas() {
     if (!fabricCanvas.current) return;
     
     const activeObjects = fabricCanvas.current.getActiveObjects();
-    if (activeObjects.length > 0) {
-      activeObjects.forEach(obj => {
-        if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') {
-          (obj as any).set({ fontFamily });
-        }
-      });
-      fabricCanvas.current.requestRenderAll();
-      saveHistory();
-    }
+    
+    activeObjects.forEach(obj => {
+      if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') {
+        (obj as any).set({ 
+          fontFamily: fontFamily,
+          dirty: true 
+        });
+        (obj as any).setCoords();
+      }
+    });
+
+    fabricCanvas.current.requestRenderAll();
+    saveHistory();
+
+    // Secondary render once font is definitely loaded
+    document.fonts.load(`1em ${fontFamily}`).then(() => {
+      if (fabricCanvas.current) {
+        fabricCanvas.current.getObjects().forEach(o => {
+          if ((o as any).fontFamily === fontFamily) {
+            (o as any).set({ dirty: true });
+            o.setCoords();
+          }
+        });
+        fabricCanvas.current.requestRenderAll();
+      }
+    });
   };
 
   const changeActiveColor = (color: string) => {
@@ -784,47 +823,45 @@ export default function StickerCanvas() {
           </div>
         </header>
 
-        <div className="flex-1 flex flex-col items-center justify-center relative p-4 md:p-8 overflow-hidden bg-transparent">
+        <div className="flex-1 flex flex-col items-center justify-center relative p-4 md:p-8 overflow-hidden min-h-[500px]">
           {/* Subtle Grid Background */}
           <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, #ffffff 1px, transparent 1px)', backgroundSize: '30px 30px' }} />
           
-          <div className="relative group w-full max-w-[500px] aspect-square flex items-center justify-center">
+          <div className="relative group w-full max-w-[500px] aspect-square flex items-center justify-center flex-shrink-0">
             <div className="absolute inset-0 bg-indigo-500/10 blur-3xl animate-pulse pointer-events-none" />
             
             <motion.div 
               className={cn(
-                "relative bg-black/20 backdrop-blur-sm rounded-full md:rounded-[60px] p-2 md:p-8 flex items-center justify-center",
-                "w-full aspect-square border border-white/5",
+                "relative bg-black/40 backdrop-blur-md rounded-[60px] p-2 flex items-center justify-center overflow-hidden",
+                "w-full aspect-square border border-white/10 shadow-2xl",
                 animations[activeAnimation]
               )}
             >
-              <div className="absolute inset-4 md:inset-8 border-2 md:border-4 border-dashed border-white/10 rounded-full md:rounded-[40px] pointer-events-none" />
+              <div className="absolute inset-4 md:inset-8 border-2 md:border-4 border-dashed border-white/10 rounded-[60px] pointer-events-none z-10" />
               
               {/* Responsive scaling wrapper for canvas */}
-              <div className="scale-[0.6] sm:scale-[0.8] md:scale-100 origin-center transition-transform duration-500">
-                <canvas ref={canvasRef} className="rounded-full overflow-hidden" />
+              <div className="scale-[0.55] sm:scale-[0.8] md:scale-100 origin-center transition-transform duration-500 flex items-center justify-center">
+                <canvas ref={canvasRef} className="rounded-[40px] overflow-hidden shadow-2xl" />
               </div>
             </motion.div>
             
-            <div className="absolute -bottom-14 left-1/2 -translate-x-1/2 flex items-center gap-3 md:gap-4 backdrop-blur-md bg-black/40 px-4 md:px-6 py-2 rounded-2xl border border-white/10 whitespace-nowrap">
-              <div className="flex flex-col items-center"><span className="text-[7px] md:text-[8px] text-white/40 uppercase">Canvas</span><span className="text-[9px] md:text-[10px] font-mono">512px</span></div>
-              <div className="w-[1px] h-6 bg-white/10"></div>
-              <div className="flex flex-col items-center"><span className="text-[7px] md:text-[8px] text-white/40 uppercase">Format</span><span className="text-[9px] md:text-[10px] font-mono">SVG/PNG</span></div>
-              <div className="w-[1px] h-6 bg-white/10"></div>
-              <button 
-                onClick={deleteSelected}
-                className="flex items-center gap-2 text-white/60 hover:text-red-400 transition-colors"
-                title="Svuota Canvas / Elimina Selezionato"
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-            
-            {activeTool === 'draw' && (
-              <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-pink-500 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-xl shadow-pink-500/20 animate-bounce z-40">
-                Doodle Active
+            {/* Metadata Badges */}
+            <div className="absolute -bottom-16 left-1/2 -translate-x-1/2 flex items-center gap-4 backdrop-blur-md bg-black/40 px-6 py-3 rounded-2xl border border-white/10 whitespace-nowrap z-20">
+              <div className="flex flex-col items-start px-2">
+                <span className="text-[8px] text-white/40 uppercase font-black tracking-tighter">Dimensioni</span>
+                <span className="text-[10px] font-mono text-white/80">500 x 500 px</span>
               </div>
-            )}
+              <div className="w-px h-6 bg-white/10" />
+              <div className="flex flex-col items-start px-2">
+                <span className="text-[8px] text-white/40 uppercase font-black tracking-tighter">Rendering</span>
+                <span className="text-[10px] font-mono text-indigo-400">Stable-V7</span>
+              </div>
+              <div className="w-px h-6 bg-white/10" />
+              <div className="flex items-center gap-2 pl-2">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-[9px] font-bold text-white/60 tracking-wider">LIVE</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
