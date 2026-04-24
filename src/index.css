@@ -1,12 +1,13 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;900&family=Playfair+Display:ital,wght@1,900&family=Space+Grotesk:wght@700&family=Pacifico&family=Bangers&family=Lobster&display=swap');
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Anton", sans-serif;
   --font-artistic: "Pacifico", cursive;
   --font-comic: "Bangers", system-ui;
-  --font-fancy: "Lobster", cursive;
+  --font-elegant: "Lobster", cursive;
+  --font-modern: "Space Grotesk", sans-serif;
+  --font-editorial: "Playfair Display", serif;
   
   --color-neon-yellow: #CCFF00;
   --color-neon-pink: #FF00E5;

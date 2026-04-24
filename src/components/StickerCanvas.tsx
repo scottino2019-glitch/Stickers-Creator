@@ -26,10 +26,12 @@ import confetti from 'canvas-confetti';
 // Available fonts
 const FONTS = [
   { name: 'Standard', value: 'Inter' },
-  { name: 'Artistico', value: 'Pacifico' },
-  { name: 'Comic', value: 'Bangers' },
-  { name: 'Elegante', value: 'Lobster' },
   { name: 'Bold', value: 'Anton' },
+  { name: 'Artistic', value: 'Pacifico' },
+  { name: 'Comic', value: 'Bangers' },
+  { name: 'Elegant', value: 'Lobster' },
+  { name: 'Display', value: 'Space Grotesk' },
+  { name: 'Editorial', value: 'Playfair Display' },
 ];
 
 const COLORS = [
@@ -96,11 +98,19 @@ export default function StickerCanvas() {
     });
   };
 
+  const clearCanvas = () => {
+    if (!fabricCanvas.current) return;
+    fabricCanvas.current.getObjects().forEach(obj => fabricCanvas.current?.remove(obj));
+    fabricCanvas.current.renderAll();
+    saveHistory();
+  };
+
   useEffect(() => {
     // Preload fonts to ensure they are available to Fabric.js
     const fontNames = FONTS.map(f => f.value);
     fontNames.forEach(font => {
-      document.fonts.load(`1em ${font}`).catch(() => {});
+      const fontToLoad = font.includes(' ') ? `"${font}"` : font;
+      document.fonts.load(`1em ${fontToLoad}`).catch(() => {});
     });
 
     if (!canvasRef.current || fabricCanvas.current) return;
@@ -230,27 +240,46 @@ export default function StickerCanvas() {
     if (!fabricCanvas.current) return;
     
     const font = selectedFont || 'Inter';
+    const cleanFontName = font.replace(/['"]/g, '');
+    const fontVal = cleanFontName.includes(' ') ? `"${cleanFontName}"` : cleanFontName;
     
-    const text = new fabric.IText('Tocca per editare', {
+    const text = new fabric.IText('Tocca per scrivere', {
       left: 250,
       top: 250,
-      fontFamily: font,
+      fontFamily: fontVal,
       fill: selectedColor,
-      fontSize: 50,
+      fontSize: 60,
       textAlign: 'center',
       originX: 'center',
       originY: 'center',
       cornerColor: '#6366f1',
       cornerStyle: 'circle',
       transparentCorners: false,
-      padding: 10,
+      padding: 15,
       objectCaching: false
     });
 
     fabricCanvas.current.add(text);
     fabricCanvas.current.setActiveObject(text);
-    fabricCanvas.current.requestRenderAll();
+    
+    // Immediate render with fallback
+    fabricCanvas.current.renderAll();
     saveHistory();
+
+    // Secondary load for exact font
+    const fontSpec = `1em "${cleanFontName}"`;
+    
+    document.fonts.load(fontSpec).then(() => {
+      text.set({ 
+        fontFamily: fontVal,
+        dirty: true 
+      });
+      text.setCoords();
+      fabricCanvas.current?.renderAll();
+      setTimeout(() => fabricCanvas.current?.renderAll(), 150);
+      setTimeout(() => fabricCanvas.current?.renderAll(), 500);
+    });
+    
     setActiveTool('select');
   };
 
@@ -398,14 +427,6 @@ export default function StickerCanvas() {
     capture();
   };
 
-  const clearCanvas = () => {
-    if (!fabricCanvas.current) return;
-    fabricCanvas.current.clear();
-    fabricCanvas.current.backgroundColor = 'transparent';
-    fabricCanvas.current.requestRenderAll();
-    saveHistory();
-  };
-
   const setObjectAnimation = (type: 'none' | 'jelly' | 'float' | 'pop' | 'shake' | 'doodle') => {
     if (!fabricCanvas.current) return;
     const activeObject = fabricCanvas.current.getActiveObject() as any;
@@ -477,33 +498,56 @@ export default function StickerCanvas() {
     setSelectedFont(fontFamily);
     if (!fabricCanvas.current) return;
     
-    const activeObjects = fabricCanvas.current.getActiveObjects();
+    const canvas = fabricCanvas.current;
+    const activeObjects = canvas.getActiveObjects();
     
-    activeObjects.forEach(obj => {
-      if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') {
-        (obj as any).set({ 
-          fontFamily: fontFamily,
-          dirty: true 
-        });
-        (obj as any).setCoords();
-      }
-    });
+    const applyFontAction = () => {
+      activeObjects.forEach(obj => {
+        if (obj instanceof fabric.Text || (obj as any).type?.includes('text')) {
+          const fontVal = fontFamily.includes(' ') ? `"${fontFamily}"` : fontFamily;
+          (obj as any).set({ 
+            fontFamily: fontVal,
+            dirty: true 
+          });
+          (obj as any).setCoords();
+        }
+      });
+      canvas.renderAll();
+      saveHistory();
 
-    fabricCanvas.current.requestRenderAll();
-    saveHistory();
-
-    // Secondary render once font is definitely loaded
-    document.fonts.load(`1em ${fontFamily}`).then(() => {
-      if (fabricCanvas.current) {
-        fabricCanvas.current.getObjects().forEach(o => {
-          if ((o as any).fontFamily === fontFamily) {
-            (o as any).set({ dirty: true });
-            o.setCoords();
+      // Ensure stable render
+      const finalize = () => {
+        if (!canvas) return;
+        canvas.getObjects().forEach(o => {
+          if ((o as any).type?.includes('text')) {
+             (o as any).set({ dirty: true });
+             (o as any).setCoords();
           }
         });
-        fabricCanvas.current.requestRenderAll();
-      }
-    });
+        canvas.renderAll();
+      };
+
+      requestAnimationFrame(finalize);
+      setTimeout(finalize, 100);
+      setTimeout(finalize, 500);
+    };
+
+    // Robust font loading
+    const cleanName = fontFamily.replace(/['"]/g, '');
+    const fontSpec = `1em "${cleanName}"`;
+    
+    if (document.fonts.check(fontSpec)) {
+      applyFontAction();
+    } else {
+      document.fonts.load(fontSpec)
+        .then(() => {
+          applyFontAction();
+        })
+        .catch(() => {
+          // Fallback but still try to apply
+          applyFontAction();
+        });
+    }
   };
 
   const changeActiveColor = (color: string) => {
@@ -540,6 +584,17 @@ export default function StickerCanvas() {
         <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-[#6366f1] rounded-full blur-[120px] opacity-30"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-[#ec4899] rounded-full blur-[120px] opacity-30"></div>
         <div className="absolute top-[20%] right-[10%] w-[30%] h-[30%] bg-[#06b6d4] rounded-full blur-[100px] opacity-20"></div>
+      </div>
+
+      {/* Strong Hidden Font Preloader for Fabric.js */}
+      <div className="fixed -top-[5000px] left-0 opacity-0 pointer-events-none invisible" aria-hidden="true" id="font-preloader">
+        <div style={{ fontFamily: '"Inter", sans-serif' }}>font-load-probe</div>
+        <div style={{ fontFamily: '"Anton", sans-serif' }}>font-load-probe</div>
+        <div style={{ fontFamily: '"Pacifico", sans-serif' }}>font-load-probe</div>
+        <div style={{ fontFamily: '"Bangers", sans-serif' }}>font-load-probe</div>
+        <div style={{ fontFamily: '"Lobster", sans-serif' }}>font-load-probe</div>
+        <div style={{ fontFamily: '"Space Grotesk", sans-serif' }}>font-load-probe</div>
+        <div style={{ fontFamily: '"Playfair Display", sans-serif' }}>font-load-probe</div>
       </div>
 
       {/* Sidebar Tool - Mobile Overlay / Desktop Aside */}
@@ -719,16 +774,25 @@ export default function StickerCanvas() {
                 </section>
 
                 <section>
-                  <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Artistic Fonts</h2>
-                  <div className="grid grid-cols-1 gap-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-[10px] font-bold uppercase text-white/40 tracking-widest">Typographical Style</h2>
+                    <button 
+                      onClick={() => changeTextFont(selectedFont)}
+                      className="text-[8px] font-bold text-indigo-400 bg-indigo-400/10 px-2 py-0.5 rounded-full hover:bg-indigo-400/20 transition-all flex items-center gap-1"
+                    >
+                      <Sparkles size={8} />
+                      Fix Fonts
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                     {FONTS.map(f => (
                       <button 
                         key={f.value}
                         onClick={() => changeTextFont(f.value)}
-                        style={{ fontFamily: f.value }}
+                        style={{ fontFamily: `'${f.value.replace(/'/g, '')}', sans-serif` }}
                         className={cn(
-                          "text-left py-4 px-4 rounded-xl border transition-all text-lg",
-                          selectedFont === f.value ? "bg-white/20 border-white/40 shadow-lg" : "bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/20"
+                          "text-left py-4 px-4 rounded-xl border transition-all text-xl",
+                          selectedFont === f.value ? "bg-white/20 border-white/40 shadow-lg ring-2 ring-white/10" : "bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/20"
                         )}
                       >
                         {f.name}
@@ -794,32 +858,60 @@ export default function StickerCanvas() {
 
       {/* Main Workspace */}
       <div className="flex-1 relative flex flex-col z-10 w-full overflow-hidden">
-        <header className="h-16 px-4 md:px-8 flex items-center justify-between border-b border-white/10 bg-deep-bg/50 backdrop-blur-sm z-30">
-          <div className="flex items-center gap-2">
+        <header className="h-20 px-4 md:px-8 flex items-center justify-between border-b border-white/10 bg-deep-bg/50 backdrop-blur-sm z-30 shrink-0">
+          <div className="flex items-center gap-4">
             {!isSidebarOpen && (
               <button 
                 onClick={() => setIsSidebarOpen(true)}
-                className="p-2 glass-button rounded-xl mr-2"
+                className="p-2.5 glass-button rounded-xl"
               >
-                <Layers size={18} />
+                <Layers size={20} />
               </button>
             )}
-            <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-4 text-[9px] md:text-[10px] font-bold uppercase text-white/40 tracking-[0.2em]">
-              <span className="truncate max-w-[120px] md:max-w-none">Summer Pack 2024</span>
-              <span className="hidden md:inline w-1 h-1 bg-white/20 rounded-full"></span>
-              <span className="text-indigo-400">Editing Mode</span>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black uppercase text-indigo-400 tracking-widest leading-tight">Editing Mode</span>
+              <h2 className="text-sm font-bold text-white/80">Draft Canvas</h2>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-             <div className="flex -space-x-2">
-               <div className="w-8 h-8 rounded-full glass-panel border-2 border-indigo-500 text-[10px] flex items-center justify-center">01</div>
-               <div className="w-8 h-8 rounded-full glass-panel border-2 border-white/10 text-[10px] flex items-center justify-center text-white/40">+</div>
-             </div>
-             {isSidebarOpen && (
-               <button onClick={() => setIsSidebarOpen(false)} className="p-2 glass-button rounded-xl hidden md:block">
-                 <ChevronLeft size={18} />
-               </button>
-             )}
+
+          <div className="flex items-center gap-2 md:gap-4">
+            <div className="flex items-center gap-1 md:gap-2 p-1.5 glass-panel rounded-2xl bg-white/5">
+              <button 
+                onClick={undo} 
+                disabled={historyIndex <= 0}
+                className={cn(
+                  "p-2.5 hover:bg-white/10 rounded-xl transition-all",
+                  historyIndex <= 0 ? "opacity-20 cursor-not-allowed" : "text-indigo-400 hover:scale-110"
+                )}
+                title="Undo"
+              >
+                <Undo size={18} />
+              </button>
+              <button 
+                onClick={redo} 
+                disabled={historyIndex >= history.length - 1}
+                className={cn(
+                  "p-2.5 hover:bg-white/10 rounded-xl transition-all",
+                  historyIndex >= history.length - 1 ? "opacity-20 cursor-not-allowed" : "text-indigo-400 hover:scale-110"
+                )}
+                title="Redo"
+              >
+                <Redo size={18} />
+              </button>
+              <div className="w-px h-5 bg-white/10 mx-1" />
+              <button 
+                onClick={clearCanvas}
+                className="p-2.5 hover:bg-red-500/20 text-white/40 hover:text-red-400 rounded-xl transition-all hover:scale-110"
+                title="Svuota"
+              >
+                <Trash2 size={18} />
+              </button>
+            </div>
+            
+            <div className="hidden sm:flex -space-x-2">
+              <div className="w-8 h-8 rounded-full ring-2 ring-indigo-500 bg-indigo-500/20 text-[10px] flex items-center justify-center font-bold">V1</div>
+              <div className="w-8 h-8 rounded-full ring-2 ring-white/10 bg-white/5 text-[10px] flex items-center justify-center text-white/40 font-bold">+</div>
+            </div>
           </div>
         </header>
 
