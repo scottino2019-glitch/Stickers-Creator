@@ -54,8 +54,7 @@ export default function StickerCanvas() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   // History Management
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [historyState, setHistoryState] = useState<{ list: string[], index: number }>({ list: [], index: -1 });
   const isUpdatingHistory = useRef(false);
 
   // Animation Management
@@ -65,35 +64,60 @@ export default function StickerCanvas() {
 
   const saveHistory = () => {
     if (!fabricCanvas.current || isUpdatingHistory.current) return;
-    const json = JSON.stringify(fabricCanvas.current.toJSON());
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(json);
     
-    // Limit history to 50 steps
-    if (newHistory.length > 50) newHistory.shift();
-    
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
+    // Pass custom properties to preserve them in JSON
+    const json = JSON.stringify(fabricCanvas.current.toJSON([
+      'customAnimation', 
+      'stroke', 
+      'strokeWidth', 
+      'strokeUniform', 
+      'shadow', 
+      'paintFirst',
+      '_originalAngle',
+      '_originalScaleX',
+      '_originalScaleY',
+      '_originalTop',
+      '_originalLeft',
+      'objectCaching'
+    ]));
+
+    setHistoryState(prev => {
+      const newList = prev.list.slice(0, prev.index + 1);
+      newList.push(json);
+      
+      const maxLength = 20; // Reduced for performance, can be increased
+      let newIndex = newList.length - 1;
+      
+      if (newList.length > maxLength) {
+        newList.shift();
+        newIndex = newList.length - 1;
+      }
+      
+      return {
+        list: newList,
+        index: newIndex
+      };
+    });
   };
 
   const undo = () => {
-    if (historyIndex <= 0 || !fabricCanvas.current) return;
+    if (historyState.index <= 0 || !fabricCanvas.current) return;
     isUpdatingHistory.current = true;
-    const prevIndex = historyIndex - 1;
-    fabricCanvas.current.loadFromJSON(JSON.parse(history[prevIndex]), () => {
+    const prevIndex = historyState.index - 1;
+    fabricCanvas.current.loadFromJSON(JSON.parse(historyState.list[prevIndex]), () => {
       fabricCanvas.current?.renderAll();
-      setHistoryIndex(prevIndex);
+      setHistoryState(prev => ({ ...prev, index: prevIndex }));
       isUpdatingHistory.current = false;
     });
   };
 
   const redo = () => {
-    if (historyIndex >= history.length - 1 || !fabricCanvas.current) return;
+    if (historyState.index >= historyState.list.length - 1 || !fabricCanvas.current) return;
     isUpdatingHistory.current = true;
-    const nextIndex = historyIndex + 1;
-    fabricCanvas.current.loadFromJSON(JSON.parse(history[nextIndex]), () => {
+    const nextIndex = historyState.index + 1;
+    fabricCanvas.current.loadFromJSON(JSON.parse(historyState.list[nextIndex]), () => {
       fabricCanvas.current?.renderAll();
-      setHistoryIndex(nextIndex);
+      setHistoryState(prev => ({ ...prev, index: nextIndex }));
       isUpdatingHistory.current = false;
     });
   };
@@ -683,20 +707,20 @@ export default function StickerCanvas() {
                   <div className="flex gap-2">
                     <button 
                       onClick={undo} 
-                      disabled={historyIndex <= 0}
+                      disabled={historyState.index <= 0}
                       className={cn(
                         "flex-1 py-3 glass-button rounded-xl flex justify-center",
-                        historyIndex <= 0 && "opacity-30 cursor-not-allowed"
+                        historyState.index <= 0 && "opacity-30 cursor-not-allowed"
                       )}
                     >
                       <Undo size={18}/>
                     </button>
                     <button 
                       onClick={redo} 
-                      disabled={historyIndex >= history.length - 1}
+                      disabled={historyState.index >= historyState.list.length - 1}
                       className={cn(
                         "flex-1 py-3 glass-button rounded-xl flex justify-center",
-                        historyIndex >= history.length - 1 && "opacity-30 cursor-not-allowed"
+                        historyState.index >= historyState.list.length - 1 && "opacity-30 cursor-not-allowed"
                       )}
                     >
                       <Redo size={18}/>
@@ -878,10 +902,10 @@ export default function StickerCanvas() {
             <div className="flex items-center gap-1 md:gap-2 p-1.5 glass-panel rounded-2xl bg-white/5">
               <button 
                 onClick={undo} 
-                disabled={historyIndex <= 0}
+                disabled={historyState.index <= 0}
                 className={cn(
                   "p-2.5 hover:bg-white/10 rounded-xl transition-all",
-                  historyIndex <= 0 ? "opacity-20 cursor-not-allowed" : "text-indigo-400 hover:scale-110"
+                  historyState.index <= 0 ? "opacity-20 cursor-not-allowed" : "text-indigo-400 hover:scale-110"
                 )}
                 title="Undo"
               >
@@ -889,10 +913,10 @@ export default function StickerCanvas() {
               </button>
               <button 
                 onClick={redo} 
-                disabled={historyIndex >= history.length - 1}
+                disabled={historyState.index >= historyState.list.length - 1}
                 className={cn(
                   "p-2.5 hover:bg-white/10 rounded-xl transition-all",
-                  historyIndex >= history.length - 1 ? "opacity-20 cursor-not-allowed" : "text-indigo-400 hover:scale-110"
+                  historyState.index >= historyState.list.length - 1 ? "opacity-20 cursor-not-allowed" : "text-indigo-400 hover:scale-110"
                 )}
                 title="Redo"
               >
