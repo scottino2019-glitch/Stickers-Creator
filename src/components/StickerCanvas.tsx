@@ -104,10 +104,15 @@ export default function StickerCanvas() {
     if (historyState.index <= 0 || !fabricCanvas.current) return;
     isUpdatingHistory.current = true;
     const prevIndex = historyState.index - 1;
-    fabricCanvas.current.loadFromJSON(JSON.parse(historyState.list[prevIndex]), () => {
+    const json = JSON.parse(historyState.list[prevIndex]);
+    
+    fabricCanvas.current.loadFromJSON(json).then(() => {
       fabricCanvas.current?.renderAll();
       setHistoryState(prev => ({ ...prev, index: prevIndex }));
-      isUpdatingHistory.current = false;
+      // Slight delay to ensure all listeners are processed
+      setTimeout(() => {
+        isUpdatingHistory.current = false;
+      }, 50);
     });
   };
 
@@ -115,10 +120,15 @@ export default function StickerCanvas() {
     if (historyState.index >= historyState.list.length - 1 || !fabricCanvas.current) return;
     isUpdatingHistory.current = true;
     const nextIndex = historyState.index + 1;
-    fabricCanvas.current.loadFromJSON(JSON.parse(historyState.list[nextIndex]), () => {
+    const json = JSON.parse(historyState.list[nextIndex]);
+    
+    fabricCanvas.current.loadFromJSON(json).then(() => {
       fabricCanvas.current?.renderAll();
       setHistoryState(prev => ({ ...prev, index: nextIndex }));
-      isUpdatingHistory.current = false;
+      // Slight delay to ensure all listeners are processed
+      setTimeout(() => {
+        isUpdatingHistory.current = false;
+      }, 50);
     });
   };
 
@@ -146,6 +156,18 @@ export default function StickerCanvas() {
       preserveObjectStacking: true,
     });
 
+    // Global selection style for better visibility
+    fabric.Object.prototype.set({
+      transparentCorners: false,
+      cornerColor: '#6366f1',
+      cornerStyle: 'circle',
+      cornerSize: 12,
+      padding: 10,
+      borderColor: '#6366f1',
+      borderScaleFactor: 2.5,
+      borderDashArray: [5, 5],
+    });
+
     // Save initial state
     saveHistory();
 
@@ -168,6 +190,13 @@ export default function StickerCanvas() {
       
       for (const obj of objects) {
         const o = obj as any;
+        
+        // Skip animating the active object so it's easier to select and edit
+        if (fabricCanvas.current && o === fabricCanvas.current.getActiveObject()) {
+          // If it was animating, ensure it doesn't leave "ghost" transformations
+          o.set('objectCaching', false);
+          continue;
+        }
         
         if (!o.customAnimation || o.customAnimation === 'none') {
           if (o._originalAngle !== undefined) {
@@ -703,32 +732,6 @@ export default function StickerCanvas() {
                 </section>
 
                 <section>
-                  <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Azioni</h2>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={undo} 
-                      disabled={historyState.index <= 0}
-                      className={cn(
-                        "flex-1 py-3 glass-button rounded-xl flex justify-center",
-                        historyState.index <= 0 && "opacity-30 cursor-not-allowed"
-                      )}
-                    >
-                      <Undo size={18}/>
-                    </button>
-                    <button 
-                      onClick={redo} 
-                      disabled={historyState.index >= historyState.list.length - 1}
-                      className={cn(
-                        "flex-1 py-3 glass-button rounded-xl flex justify-center",
-                        historyState.index >= historyState.list.length - 1 && "opacity-30 cursor-not-allowed"
-                      )}
-                    >
-                      <Redo size={18}/>
-                    </button>
-                  </div>
-                </section>
-
-                <section>
                   <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Stile Sticker</h2>
                   <button 
                     onClick={toggleStickerEffect}
@@ -756,13 +759,21 @@ export default function StickerCanvas() {
 
                 <section>
                   <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Workspace</h2>
-                  <button 
-                    onClick={clearCanvas}
-                    className="w-full py-3 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center gap-2 text-[10px] font-bold uppercase hover:bg-red-500/10 hover:border-red-500/30 transition-all text-white/60 hover:text-red-400"
-                  >
-                    <Trash2 size={14} />
-                    Clean Stage
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={clearCanvas}
+                      className="flex-1 py-3 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center gap-2 text-[10px] font-bold uppercase hover:bg-red-500/10 hover:border-red-500/30 transition-all text-white/60 hover:text-red-400"
+                    >
+                      <Trash2 size={14} />
+                      Svuota
+                    </button>
+                    <button 
+                      onClick={() => setIsSidebarOpen(false)}
+                      className="flex-1 py-3 glass-button rounded-xl md:hidden flex items-center justify-center gap-2 text-[10px] font-bold uppercase"
+                    >
+                      Chiudi
+                    </button>
+                  </div>
                 </section>
 
                 <section>
@@ -899,33 +910,33 @@ export default function StickerCanvas() {
           </div>
 
           <div className="flex items-center gap-2 md:gap-4">
-            <div className="flex items-center gap-1 md:gap-2 p-1.5 glass-panel rounded-2xl bg-white/5">
+            <div className="flex items-center gap-1 md:gap-2 p-1.5 glass-panel rounded-2xl bg-white/5 shadow-inner">
               <button 
                 onClick={undo} 
                 disabled={historyState.index <= 0}
                 className={cn(
-                  "p-2.5 hover:bg-white/10 rounded-xl transition-all",
-                  historyState.index <= 0 ? "opacity-20 cursor-not-allowed" : "text-indigo-400 hover:scale-110"
+                  "p-2.5 hover:bg-white/10 rounded-xl transition-all active:scale-95 group",
+                  historyState.index <= 0 ? "opacity-20 cursor-not-allowed" : "text-indigo-400"
                 )}
-                title="Undo"
+                title="Ripristina (Undo)"
               >
-                <Undo size={18} />
+                <Undo size={18} className="group-hover:-rotate-45 transition-transform" />
               </button>
               <button 
                 onClick={redo} 
                 disabled={historyState.index >= historyState.list.length - 1}
                 className={cn(
-                  "p-2.5 hover:bg-white/10 rounded-xl transition-all",
-                  historyState.index >= historyState.list.length - 1 ? "opacity-20 cursor-not-allowed" : "text-indigo-400 hover:scale-110"
+                  "p-2.5 hover:bg-white/10 rounded-xl transition-all active:scale-95 group",
+                  historyState.index >= historyState.list.length - 1 ? "opacity-20 cursor-not-allowed" : "text-indigo-400"
                 )}
-                title="Redo"
+                title="Ripeti (Redo)"
               >
-                <Redo size={18} />
+                <Redo size={18} className="group-hover:rotate-45 transition-transform" />
               </button>
               <div className="w-px h-5 bg-white/10 mx-1" />
               <button 
                 onClick={clearCanvas}
-                className="p-2.5 hover:bg-red-500/20 text-white/40 hover:text-red-400 rounded-xl transition-all hover:scale-110"
+                className="p-2.5 hover:bg-red-500/20 text-white/40 hover:text-red-400 rounded-xl transition-all hover:scale-110 active:scale-90"
                 title="Svuota"
               >
                 <Trash2 size={18} />
