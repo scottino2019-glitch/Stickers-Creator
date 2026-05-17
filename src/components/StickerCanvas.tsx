@@ -59,6 +59,7 @@ export default function StickerCanvas() {
 
   // Animation Management
   const [isExportingGif, setIsExportingGif] = useState(false);
+  const isExportingRef = useRef(false);
   const [exportProgress, setExportProgress] = useState(0);
   const animationFrameId = useRef<number | null>(null);
 
@@ -68,6 +69,7 @@ export default function StickerCanvas() {
     // Pass custom properties to preserve them in JSON
     const json = JSON.stringify(fabricCanvas.current.toJSON([
       'customAnimation', 
+      'animationIntensity',
       'stroke', 
       'strokeWidth', 
       'strokeUniform', 
@@ -85,7 +87,7 @@ export default function StickerCanvas() {
       const newList = prev.list.slice(0, prev.index + 1);
       newList.push(json);
       
-      const maxLength = 20; // Reduced for performance, can be increased
+      const maxLength = 30; // Increased history
       let newIndex = newList.length - 1;
       
       if (newList.length > maxLength) {
@@ -100,36 +102,44 @@ export default function StickerCanvas() {
     });
   };
 
-  const undo = () => {
+  const undo = async () => {
     if (historyState.index <= 0 || !fabricCanvas.current) return;
     isUpdatingHistory.current = true;
-    const prevIndex = historyState.index - 1;
-    const json = JSON.parse(historyState.list[prevIndex]);
-    
-    fabricCanvas.current.loadFromJSON(json).then(() => {
-      fabricCanvas.current?.renderAll();
+    try {
+      const prevIndex = historyState.index - 1;
+      const json = JSON.parse(historyState.list[prevIndex]);
+      
+      await fabricCanvas.current.loadFromJSON(json);
+      fabricCanvas.current.renderAll();
       setHistoryState(prev => ({ ...prev, index: prevIndex }));
+    } catch (err) {
+      console.error("Undo error:", err);
+    } finally {
       // Slight delay to ensure all listeners are processed
       setTimeout(() => {
         isUpdatingHistory.current = false;
       }, 50);
-    });
+    }
   };
 
-  const redo = () => {
+  const redo = async () => {
     if (historyState.index >= historyState.list.length - 1 || !fabricCanvas.current) return;
     isUpdatingHistory.current = true;
-    const nextIndex = historyState.index + 1;
-    const json = JSON.parse(historyState.list[nextIndex]);
-    
-    fabricCanvas.current.loadFromJSON(json).then(() => {
-      fabricCanvas.current?.renderAll();
+    try {
+      const nextIndex = historyState.index + 1;
+      const json = JSON.parse(historyState.list[nextIndex]);
+      
+      await fabricCanvas.current.loadFromJSON(json);
+      fabricCanvas.current.renderAll();
       setHistoryState(prev => ({ ...prev, index: nextIndex }));
+    } catch (err) {
+      console.error("Redo error:", err);
+    } finally {
       // Slight delay to ensure all listeners are processed
       setTimeout(() => {
         isUpdatingHistory.current = false;
       }, 50);
-    });
+    }
   };
 
   const clearCanvas = () => {
@@ -173,28 +183,92 @@ export default function StickerCanvas() {
 
     // Removed guide circle to allow full canvas usage for true stickers
 
+    fabricCanvas.current.selectionColor = 'rgba(99, 102, 241, 0.1)';
+    fabricCanvas.current.selectionBorderColor = 'rgba(99, 102, 241, 0.5)';
+    fabricCanvas.current.selectionLineWidth = 1;
+
     // Listeners for history
-    fabricCanvas.current.on('object:added', saveHistory);
-    fabricCanvas.current.on('object:modified', saveHistory);
+    fabricCanvas.current.on('mouse:down', () => { (fabricCanvas.current as any).__isMouseDown = true; });
+    fabricCanvas.current.on('mouse:up', () => { 
+      (fabricCanvas.current as any).__isMouseDown = false;
+      fabricCanvas.current?.getObjects().forEach(obj => { (obj as any).__isTransforming = false; });
+    });
+
+    fabricCanvas.current.on('object:added', (e) => {
+      // Auto-select text or paths when added for convenience
+      if (e.target && (e.target.type === 'text' || e.target.type === 'i-text' || e.target.type === 'path')) {
+         fabricCanvas.current?.setActiveObject(e.target);
+      }
+      saveHistory();
+    });
+    
+    fabricCanvas.current.on('path:created', (e: any) => {
+      const path = e.path;
+      path.set({
+        cornerColor: '#6366f1',
+        cornerStyle: 'circle',
+        transparentCorners: false,
+        padding: 5
+      });
+    });
+
+    fabricCanvas.current.on('selection:created', (e) => {
+      const obj = e.selected?.[0] as any;
+      if (obj && obj.animationIntensity !== undefined) {
+        setCurrentIntensity(obj.animationIntensity);
+      } else if (obj) {
+        setCurrentIntensity(1);
+      }
+    });
+
+    fabricCanvas.current.on('selection:updated', (e) => {
+      const obj = e.selected?.[0] as any;
+      if (obj && obj.animationIntensity !== undefined) {
+        setCurrentIntensity(obj.animationIntensity);
+      } else if (obj) {
+        setCurrentIntensity(1);
+      }
+    });
+
+    fabricCanvas.current.on('object:modified', (e) => {
+      const obj = e.target as any;
+      if (obj) {
+        // Sync original properties so animation resumes from new transformed state
+        obj._originalAngle = obj.angle;
+        obj._originalScaleX = obj.scaleX;
+        obj._originalScaleY = obj.scaleY;
+        obj._originalTop = obj.top;
+        obj._originalLeft = obj.left;
+      }
+      saveHistory();
+    });
+
     fabricCanvas.current.on('object:removed', saveHistory);
+
+    // Track transformation for animation skip
+    fabricCanvas.current.on('object:moving', (e) => { (e.target as any).__isTransforming = true; });
+    fabricCanvas.current.on('object:scaling', (e) => { (e.target as any).__isTransforming = true; });
+    fabricCanvas.current.on('object:rotating', (e) => { (e.target as any).__isTransforming = true; });
+    fabricCanvas.current.on('object:skewing', (e) => { (e.target as any).__isTransforming = true; });
 
     // Animation Loop
     const animate = (time: number) => {
-      if (!fabricCanvas.current || isExportingGif) {
+      if (!fabricCanvas.current) {
         animationFrameId.current = requestAnimationFrame(animate);
         return;
       }
       
       let needsRender = false;
       const objects = fabricCanvas.current.getObjects();
+      const activeObject = fabricCanvas.current.getActiveObject();
       
       for (const obj of objects) {
         const o = obj as any;
         
-        // Skip animating the active object so it's easier to select and edit
-        if (fabricCanvas.current && o === fabricCanvas.current.getActiveObject()) {
-          // If it was animating, ensure it doesn't leave "ghost" transformations
-          o.set('objectCaching', false);
+        // Skip animating ONLY when actually dragging or scaling to allow preview while selected
+        const isTransforming = o.__isTransforming || (fabricCanvas.current as any).__isMouseDown;
+        
+        if (activeObject && o === activeObject && isTransforming && !isExportingRef.current) {
           continue;
         }
         
@@ -226,24 +300,29 @@ export default function StickerCanvas() {
 
         if (o._originalAngle === undefined) {
           o._originalAngle = o.angle || 0;
-          o._originalScaleX = o.scaleX || 1;
-          o._originalScaleY = o.scaleY || 1;
-          o._originalTop = o.top || 0;
-          o._originalLeft = o.left || 0;
+          o._originalScaleX = o.scaleX || 0.0001;
+          o._originalScaleY = o.scaleY || 0.0001;
+          o._originalTop = o.top !== undefined ? o.top : 0;
+          o._originalLeft = o.left !== undefined ? o.left : 0;
         }
 
         const frequency = 0.005;
         const phase = (time * frequency) % (Math.PI * 2);
+        // Reduced intensity for active object to keep it readable, unless exporting
+        let intensity = (o.animationIntensity !== undefined ? o.animationIntensity : 1);
+        if (activeObject && o === activeObject && !isExportingRef.current) {
+          intensity *= 0.4;
+        }
 
         switch (o.customAnimation) {
           case 'jelly':
             o.set({
-              scaleX: o._originalScaleX * (1 + Math.sin(phase * 4) * 0.1),
-              scaleY: o._originalScaleY * (1 + Math.cos(phase * 4) * 0.1)
+              scaleX: o._originalScaleX * (1 + Math.sin(phase * 4) * 0.1 * intensity),
+              scaleY: o._originalScaleY * (1 + Math.cos(phase * 4) * 0.1 * intensity)
             });
             break;
           case 'pop':
-            const pScale = 1 + Math.abs(Math.sin(phase * 5)) * 0.15;
+            const pScale = 1 + Math.abs(Math.sin(phase * 5)) * 0.15 * intensity;
             o.set({
               scaleX: o._originalScaleX * pScale,
               scaleY: o._originalScaleY * pScale
@@ -251,25 +330,54 @@ export default function StickerCanvas() {
             break;
           case 'float':
             o.set({
-              top: o._originalTop + Math.sin(phase * 2) * 15,
-              angle: o._originalAngle + Math.cos(phase) * 4
+              top: o._originalTop + Math.sin(phase * 2) * 15 * intensity,
+              angle: o._originalAngle + Math.cos(phase) * 4 * intensity
             });
             break;
           case 'shake':
             o.set({
-              left: o._originalLeft + Math.sin(time * 0.02) * 4,
-              angle: o._originalAngle + Math.sin(time * 0.05) * 5
+              left: o._originalLeft + Math.sin(time * 0.02) * 4 * intensity,
+              angle: o._originalAngle + Math.sin(time * 0.05) * 5 * intensity
             });
             break;
           case 'doodle':
-            const dS = 1 + Math.sin(time * 0.01) * 0.03;
+            const dS = 1 + Math.sin(time * 0.01) * 0.03 * intensity;
             o.set({
               scaleX: o._originalScaleX * dS,
-              angle: o._originalAngle + Math.cos(time * 0.01) * 3,
-              skewX: Math.sin(time * 0.01) * 5
+              angle: o._originalAngle + Math.cos(time * 0.01) * 3 * intensity,
+              skewX: Math.sin(time * 0.01) * 5 * intensity
+            });
+            break;
+          case 'pulse':
+            const pS = 1 + Math.sin(phase * 4) * 0.1 * intensity;
+            o.set({
+              scaleX: o._originalScaleX * pS,
+              scaleY: o._originalScaleY * pS
+            });
+            break;
+          case 'bounce':
+            o.set({
+              top: o._originalTop + Math.abs(Math.sin(phase * 4)) * -30 * intensity
+            });
+            break;
+          case 'spin':
+            o.set({
+              angle: o._originalAngle + (time * 0.1 * intensity) % 360
+            });
+            break;
+          case 'swing':
+            o.set({
+              angle: o._originalAngle + Math.sin(phase * 4) * 15 * intensity
+            });
+            break;
+          case 'wobble':
+            o.set({
+              left: o._originalLeft + Math.sin(phase * 4) * 10 * intensity,
+              scaleX: o._originalScaleX * (1 + Math.cos(phase * 8) * 0.05 * intensity)
             });
             break;
         }
+        o.setCoords();
       }
 
       if (needsRender) {
@@ -403,21 +511,49 @@ export default function StickerCanvas() {
 
   const toggleStickerEffect = () => {
     if (!fabricCanvas.current) return;
-    const activeObject = fabricCanvas.current.getActiveObject();
+    const activeObject = fabricCanvas.current.getActiveObject() as any;
     if (activeObject) {
-      const hasStroke = activeObject.stroke === '#fff';
-      activeObject.set({
-        stroke: hasStroke ? null : '#fff',
-        strokeWidth: hasStroke ? 0 : 8,
-        strokeUniform: true,
-        shadow: hasStroke ? null : new fabric.Shadow({
-          color: 'rgba(0,0,0,0.3)',
-          blur: 10,
-          offsetX: 5,
-          offsetY: 5
-        }),
-        paintFirst: 'stroke'
-      });
+      const isPath = activeObject.type === 'path' || activeObject.isType?.('Path');
+      
+      if (isPath) {
+        // For paths, we don't want to remove the stroke because it's the drawing itself!
+        // Instead, we add/toggle a thick white shadow or glow effect
+        const hasStickerShadow = activeObject.hasStickerShadow || false;
+        
+        if (!hasStickerShadow) {
+          activeObject.set({
+            shadow: new fabric.Shadow({
+              color: 'rgba(255,255,255,0.9)',
+              blur: 15,
+              offsetX: 0,
+              offsetY: 0
+            }),
+            hasStickerShadow: true
+          });
+        } else {
+          activeObject.set({
+            shadow: null,
+            hasStickerShadow: false
+          });
+        }
+      } else {
+        // Original logic for text/images where stroke is a border
+        const hasStroke = activeObject.stroke != null && activeObject.stroke !== '';
+        
+        activeObject.set({
+          stroke: hasStroke ? null : '#fff', 
+          strokeWidth: hasStroke ? 0 : 10,
+          strokeUniform: true,
+          shadow: hasStroke ? null : new fabric.Shadow({
+            color: 'rgba(0,0,0,0.4)',
+            blur: 12,
+            offsetX: 4,
+            offsetY: 4
+          }),
+          paintFirst: 'stroke'
+        });
+      }
+      
       fabricCanvas.current.requestRenderAll();
       saveHistory();
     }
@@ -426,25 +562,28 @@ export default function StickerCanvas() {
   const exportGif = () => {
     if (!fabricCanvas.current) return;
     setIsExportingGif(true);
+    isExportingRef.current = true;
     setExportProgress(0);
 
     const frames: string[] = [];
     const frameCount = 30;
-    const interval = 50; // Capture faster for smoother GIF
+    const interval = 66; // Slightly slower capture for better reliability
 
     // Hide selection controls
     fabricCanvas.current.discardActiveObject();
-    fabricCanvas.current.renderAll();
+    fabricCanvas.current.requestRenderAll();
 
     let captured = 0;
     const capture = () => {
+      if (!fabricCanvas.current) return;
+      
       if (captured >= frameCount) {
         setExportProgress(90);
         gifshot.createGIF({
           images: frames,
           gifWidth: 500,
           gifHeight: 500,
-          interval: 0.05,
+          interval: 0.06,
           numFrames: frameCount,
           frameDuration: 1,
           sampleInterval: 5,
@@ -463,24 +602,25 @@ export default function StickerCanvas() {
             });
           }
           setIsExportingGif(false);
+          isExportingRef.current = false;
           setExportProgress(0);
         });
         return;
       }
 
-      if (fabricCanvas.current) {
-        // High quality data URL
-        frames.push(fabricCanvas.current.toDataURL({ format: 'png' }));
-      }
+      // Explicit render before capture to sync with animation loop
+      fabricCanvas.current.renderAll();
+      frames.push(fabricCanvas.current.toDataURL({ format: 'png' }));
+      
       captured++;
       setExportProgress(Math.floor((captured / frameCount) * 80));
       setTimeout(capture, interval);
     };
 
-    capture();
+    setTimeout(capture, 100); // Small initial delay
   };
 
-  const setObjectAnimation = (type: 'none' | 'jelly' | 'float' | 'pop' | 'shake' | 'doodle') => {
+  const setObjectAnimation = (type: AnimationType) => {
     if (!fabricCanvas.current) return;
     const activeObject = fabricCanvas.current.getActiveObject() as any;
     if (activeObject) {
@@ -504,9 +644,25 @@ export default function StickerCanvas() {
       }
       
       activeObject.customAnimation = type;
+      // Initialize intensity if not set
+      if (activeObject.animationIntensity === undefined) {
+        activeObject.animationIntensity = 1;
+      }
       activeObject.setCoords();
       fabricCanvas.current.requestRenderAll();
       saveHistory();
+    }
+  };
+
+  const [currentIntensity, setCurrentIntensity] = useState(1);
+
+  const updateAnimationIntensity = (val: number) => {
+    if (!fabricCanvas.current) return;
+    const activeObject = fabricCanvas.current.getActiveObject() as any;
+    if (activeObject) {
+      activeObject.animationIntensity = val;
+      setCurrentIntensity(val);
+      fabricCanvas.current.requestRenderAll();
     }
   };
 
@@ -610,7 +766,18 @@ export default function StickerCanvas() {
     const activeObjects = fabricCanvas.current.getActiveObjects();
     if (activeObjects.length > 0) {
       activeObjects.forEach(obj => {
-        obj.set({ fill: color });
+        // If it's a path (drawing), we MUST update the stroke
+        if (obj.type === 'path' || (obj as any).isType?.('Path')) {
+          obj.set({ stroke: color });
+        } else {
+          // If it's text or shape, update fill
+          obj.set({ fill: color });
+          // If it already has a stroke (like a sticker effect), maybe update that too?
+          // For now, let's keep stroke for the "Sticker Border" separate or update it if it's not white
+          if (obj.stroke && obj.stroke !== '#fff' && obj.stroke !== 'white') {
+            obj.set({ stroke: color });
+          }
+        }
       });
       fabricCanvas.current.requestRenderAll();
       saveHistory();
@@ -621,14 +788,24 @@ export default function StickerCanvas() {
     }
   };
 
-  const [activeAnimation, setActiveAnimation] = useState<'none' | 'bounce' | 'pulse' | 'spin'>('none');
+  const [activeAnimation, setActiveAnimation] = useState<AnimationType>('none');
 
   const animations = {
     none: "",
     bounce: "animate-bounce",
     pulse: "animate-pulse",
     spin: "animate-spin",
+    jelly: "animate-jelly",
+    float: "animate-float",
+    pop: "animate-pop",
+    shake: "animate-shake",
+    doodle: "animate-doodle",
+    swing: "animate-swing",
+    wobble: "animate-wobble",
   };
+
+  const animationTypes = ['none', 'jelly', 'float', 'pop', 'shake', 'doodle', 'pulse', 'bounce', 'spin', 'swing', 'wobble'] as const;
+  type AnimationType = typeof animationTypes[number];
 
   return (
     <div className="flex h-screen w-full overflow-hidden font-sans bg-deep-bg relative">
@@ -743,37 +920,56 @@ export default function StickerCanvas() {
                 </section>
 
                 <section>
-                  <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Animazione Dinamica</h2>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['none', 'jelly', 'float', 'pop', 'shake', 'doodle'] as const).map(anim => (
+                  <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Animazione Sticker</h2>
+                  <div className="grid grid-cols-3 gap-2 mb-4">
+                    {animationTypes.map(anim => (
                       <button 
                         key={anim}
                         onClick={() => setObjectAnimation(anim)}
-                        className="py-3 px-1 rounded-xl border border-white/10 glass-button text-[10px] font-bold uppercase hover:border-indigo-500/50"
+                        className={cn(
+                          "py-2.5 px-1 rounded-xl border border-white/10 glass-button text-[9px] font-bold uppercase hover:border-indigo-500/50 transition-all group overflow-hidden relative",
+                          anim !== 'none' && `hover:${animations[anim as keyof typeof animations]}`
+                        )}
                       >
-                        {anim}
+                        <span className="relative z-10">{anim}</span>
+                        <div className="absolute inset-0 bg-indigo-500/0 group-hover:bg-indigo-500/5 transition-colors" />
                       </button>
                     ))}
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center text-[8px] font-bold uppercase text-white/40">
+                      <span>Intensità</span>
+                      <span className="text-indigo-400">×{currentIntensity.toFixed(1)}</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="0.1" 
+                      max="10" 
+                      step="0.1"
+                      defaultValue="1"
+                      onChange={(e) => updateAnimationIntensity(parseFloat(e.target.value))}
+                      onMouseUp={() => saveHistory()}
+                      className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-all"
+                    />
                   </div>
                 </section>
 
                 <section>
-                  <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Workspace</h2>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={clearCanvas}
-                      className="flex-1 py-3 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center gap-2 text-[10px] font-bold uppercase hover:bg-red-500/10 hover:border-red-500/30 transition-all text-white/60 hover:text-red-400"
-                    >
-                      <Trash2 size={14} />
-                      Svuota
-                    </button>
-                    <button 
-                      onClick={() => setIsSidebarOpen(false)}
-                      className="flex-1 py-3 glass-button rounded-xl md:hidden flex items-center justify-center gap-2 text-[10px] font-bold uppercase"
-                    >
-                      Chiudi
-                    </button>
-                  </div>
+                  <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Svuota Canvas</h2>
+                  <button 
+                    onClick={clearCanvas}
+                    className="w-full py-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center gap-2 text-[10px] font-bold uppercase hover:bg-red-500/20 transition-all text-red-500"
+                  >
+                    <Trash2 size={14} />
+                    Cancella Tutto
+                  </button>
+                  <button 
+                    onClick={() => setIsSidebarOpen(false)}
+                    className="w-full mt-2 py-3 glass-button rounded-xl md:hidden flex items-center justify-center gap-2 text-[10px] font-bold uppercase"
+                  >
+                    Chiudi Menu
+                  </button>
                 </section>
 
                 <section>
@@ -791,15 +987,16 @@ export default function StickerCanvas() {
                 </section>
 
                 <section>
-                  <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Anteprima Animazione</h2>
-                  <div className="grid grid-cols-4 gap-2">
-                    {(['none', 'bounce', 'pulse', 'spin'] as const).map(anim => (
+                  <h2 className="text-[10px] font-bold uppercase text-white/40 mb-3 tracking-widest">Anteprima Totale</h2>
+                  <div className="grid grid-cols-3 gap-2">
+                    {animationTypes.map(anim => (
                       <button 
                         key={anim}
-                        onClick={() => setActiveAnimation(anim)}
+                        onClick={() => setActiveAnimation(anim as any)}
                         className={cn(
-                          "py-3 px-1 rounded-xl border text-[9px] font-bold uppercase transition-all",
-                          activeAnimation === anim ? "bg-indigo-500/30 border-indigo-500/50 text-white" : "glass-button text-white/40"
+                          "py-3 px-1 rounded-xl border text-[9px] font-bold uppercase transition-all overflow-hidden",
+                          activeAnimation === anim ? "bg-indigo-500/30 border-indigo-500/50 text-white" : "glass-button text-white/40",
+                          anim !== 'none' && `hover:${animations[anim as keyof typeof animations]}`
                         )}
                       >
                         {anim}
