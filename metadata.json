@@ -1,6 +1,6 @@
 {
-  "name": "StickArt Studio",
-  "description": "Crea stickart professionali con effetti frosted glass, animazioni e strumenti artistici. Esporta in format PNG e SVG.",
+  "name": "Sticker Maker Pro",
+  "description": "Un editor potente e professionale per creare, personalizzare ed esportare sticker per WhatsApp, con gestione dei livelli, emoji, testi stile meme, disegni a mano libera, filtri e anteprima di chat.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
